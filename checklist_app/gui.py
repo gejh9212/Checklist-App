@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, 
     QPushButton, QLabel, QListWidget, QListWidgetItem, QLineEdit, QComboBox, QProgressBar,
     QDialog, QFormLayout, QDialogButtonBox, QTextEdit, QCheckBox, QMessageBox, QFileDialog,
     QAbstractItemView)
+from datetime import date
 from .scheduling import next_reset
 
 
@@ -10,6 +11,7 @@ class Editor(QDialog):
     def __init__(self, parent, checklist=False, row=None):
         super().__init__(parent)
         self.setWindowTitle('Checklist details' if checklist else 'Task details')
+        self.checklist = checklist
         form = QFormLayout(self)
         self.title = QLineEdit(row['name' if checklist else 'title'] if row else '')
         form.addRow('Name' if checklist else 'Title', self.title)
@@ -29,12 +31,30 @@ class Editor(QDialog):
         form.addRow(buttons)
 
 
+    def accept(self):
+        if not self.title.text().strip():
+            QMessageBox.warning(self, 'Name required', 'Please enter a name before saving.')
+            self.title.setFocus()
+            return
+        if not self.checklist and self.due.text().strip():
+            try:
+                value = self.due.text().strip()
+                if date.fromisoformat(value).isoformat() != value:
+                    raise ValueError
+            except ValueError:
+                QMessageBox.warning(self, 'Check the due date', 'Enter a real date in YYYY-MM-DD format, or leave the due date empty. Your edits are still here.')
+                self.due.setFocus()
+                return
+        super().accept()
+
+
 class Window(QMainWindow):
     def __init__(self, db):
         super().__init__()
         self.db = db
         self.selected = db.setting('selected')
         self.loading = False
+        self.reporting_error = False
         self.setWindowTitle('ChecklistApp')
         self.resize(1050, 700)
         geometry = db.setting('geometry')
@@ -95,10 +115,16 @@ class Window(QMainWindow):
         self.timer.start(1000)
 
     def safe(self, callback):
+        if self.reporting_error:
+            return
         try:
             callback()
         except Exception as error:
-            QMessageBox.warning(self,'Could not complete action',f'{error}\nYour saved data has not been replaced. Please retry or check the database folder permissions.')
+            self.reporting_error = True
+            try:
+                QMessageBox.warning(self,'Could not complete action',f'{error}\nPlease retry or check the database folder permissions. Do not delete your database to resolve this error.')
+            finally:
+                self.reporting_error = False
 
     def confirm(self, message):
         return not self.db.setting('confirm',True) or QMessageBox.question(self,'Please confirm',message)==QMessageBox.Yes
@@ -134,6 +160,8 @@ class Window(QMainWindow):
         return next((r for r in self.db.checklists() if r['id']==self.selected),None)
 
     def refresh_tasks(self, *args):
+        selected_item = self.tasks.currentItem()
+        selected_id = selected_item.data(Qt.UserRole) if selected_item else None
         self.loading = True
         self.tasks.clear()
         row = self.current()
@@ -164,6 +192,8 @@ class Window(QMainWindow):
             font.setStrikeOut(bool(task['is_completed']))
             item.setFont(font)
             self.tasks.addItem(item)
+            if task['id'] == selected_id:
+                self.tasks.setCurrentItem(item)
         self.tasks.setDragDropMode(QAbstractItemView.InternalMove if not query and self.filter.currentIndex()==0 and not bottom else QAbstractItemView.NoDragDrop)
         self.loading = False
 

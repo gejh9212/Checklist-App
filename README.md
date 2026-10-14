@@ -18,7 +18,7 @@ If you have a newer Python version, replace `py -3.12` with its version, such as
 
 ## Using the app
 
-The first launch creates five empty checklists: Daily Routine, Weekly Goals, Weekly Cleaning, Shopping List, and Projects. Add your own tasks using **Add task**. Select a checklist in the sidebar; check a task to complete it. Double-click to edit its title, description, priority, or optional due date (`YYYY-MM-DD`). Completed tasks have a strikethrough.
+The first launch creates five empty checklists: Daily Routine, Weekly Goals, Weekly Cleaning, Shopping List, and Projects. Add your own tasks using **Add task**. Select a checklist in the sidebar; check a task to complete it. Double-click to edit its title, description, priority, or optional due date (`YYYY-MM-DD`). Completed tasks have a strikethrough. Invalid names or due dates leave the editor open so you can correct them without losing your typed details.
 
 Create, rename, change type, duplicate, or delete checklists using the sidebar buttons. Use the up/down buttons to reorder checklists within their category. Drag tasks to reorder them while showing all tasks with no search and with “move completed tasks to bottom” disabled. Search includes descriptions; filters show complete or incomplete tasks. Progress always reflects the entire checklist, even while filtering.
 
@@ -34,7 +34,7 @@ Subtasks are an optional future feature and are not included in this version.
 
 The original request also mentioned weekly midnight in two examples/test requirements. This implementation consistently uses Monday **6:00 AM**, matching the main scheduling specification.
 
-A one-second timer checks while the app is open; startup handles missed periods. Only completion flags change, never task identity, content, or order. Calendar period keys are stored in SQLite. Transactions protect resets, and a backward clock change does not repeat a previously processed period. A forward clock change into a new period causes a reset; changing the clock back waits until the stored period is surpassed. Calendar calculations use local wall time rather than assuming every day has exactly 24 hours, accommodating daylight saving transitions.
+A one-second timer checks while the app is open; startup handles missed periods. Only completion flags change, never task identity, content, or order. Calendar period keys are stored in SQLite. Transactions protect resets and checklist duplication. Clearing completed tasks first checks for a pending reset, so tasks that belong to the new period are not accidentally removed. A backward clock change does not repeat a previously processed period. A forward clock change into a new period causes a reset; changing the clock back waits until the stored period is surpassed. Calendar calculations use local wall time rather than assuming every day has exactly 24 hours, accommodating daylight saving transitions.
 
 On Windows your actual database is:
 
@@ -56,7 +56,7 @@ From PowerShell in the project folder:
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-The suite tests database persistence, daily and weekly boundaries, missed resets, first creation, normal checklist isolation, content preservation, duplicate-reset prevention, clock rollback, backup safety, CRUD, ordering, atomic rollback, and GUI completion/search/filter/live reset. GUI tests use Qt's offscreen platform and do not touch your real database.
+The suite tests database persistence, daily and weekly boundaries, missed resets, first creation, normal checklist isolation, content preservation, duplicate-reset prevention, clock rollback, backup safety, CRUD, ordering, atomic rollback, concurrent app instances, failed duplication rollback, clearing at reset boundaries, preserving edited text after validation errors, and GUI completion/search/filter/live reset. GUI tests use Qt's offscreen platform and do not touch your real database.
 
 For a manual Windows check: create a checklist of each type, add/edit tasks with descriptions and due dates, check tasks, search/filter, reorder tasks, restart, and confirm data/settings persist. Make a backup and verify the file exists. Do not change the system clock to test resets; automated tests inject a clock safely.
 
