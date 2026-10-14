@@ -109,6 +109,56 @@ class DatabaseTests(unittest.TestCase):
         self.db.connection.execute('DROP TRIGGER fail_reset')
         self.assertTrue({self.daily,self.weekly}.issubset(self.db.reset_due()))
 
+    def test_failed_duplicate_leaves_no_partial_checklist(self):
+        before = [dict(row) for row in self.db.checklists()]
+        self.db.connection.execute("CREATE TRIGGER reject_copy BEFORE INSERT ON tasks BEGIN SELECT RAISE(ABORT,'copy failed'); END")
+        with self.assertRaises(Exception):
+            self.db.duplicate(self.daily)
+        self.assertEqual([dict(row) for row in self.db.checklists()], before)
+        self.assertEqual(len(self.db.tasks(self.daily)), 1)
+
+    def test_clear_completed_checks_reset_before_deleting(self):
+        self.now = datetime(2026,10,19,6)
+        self.db.clear_completed(self.daily)
+        self.assertEqual(len(self.db.tasks(self.daily)), 1)
+        self.assertFalse(self.completed(self.daily))
+        self.db.clear_completed(self.normal)
+        self.assertEqual(self.db.tasks(self.normal), [])
+
+    def test_duplicate_checks_missed_reset(self):
+        self.now = datetime(2026,10,19,6)
+        copy = self.db.duplicate(self.daily)
+        self.assertFalse(self.completed(copy))
+        self.assertEqual(self.db.tasks(copy)[0]['description'], 'Details')
+
+    def test_nested_operations_roll_back_together(self):
+        before = len(self.db.checklists())
+        with self.assertRaises(RuntimeError):
+            with self.db.transaction():
+                self.db.create_checklist('Do not keep', 'normal')
+                self.db.set_setting('rolled_back', True)
+                raise RuntimeError('simulated failure')
+        self.assertEqual(len(self.db.checklists()), before)
+        self.assertIsNone(self.db.setting('rolled_back'))
+
+    def test_two_instances_do_not_repeat_reset(self):
+        second = Database(self.path, lambda:self.now)
+        try:
+            self.now = datetime(2026,10,19,6)
+            self.db.reset_due()
+            self.db.complete(self.ids[self.daily],True)
+            self.assertEqual(second.reset_due(), [])
+            self.assertTrue(second.tasks(self.daily)[0]['is_completed'])
+        finally:
+            second.close()
+
+    def test_deleted_defaults_do_not_reappear(self):
+        for row in self.db.checklists():
+            self.db.delete_checklist(row['id'])
+        self.db.close()
+        self.db = Database(self.path, lambda:self.now)
+        self.assertEqual(self.db.checklists(), [])
+
     def test_calendar_dst_and_next_reset(self):
         self.assertEqual(period('daily',datetime(2026,11,1,5,59)),'2026-10-31')
         self.assertEqual(period('daily',datetime(2026,11,1,6)),'2026-11-01')

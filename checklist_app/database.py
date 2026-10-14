@@ -1,6 +1,8 @@
 import json
 import os
 import sqlite3
+from contextlib import contextmanager
+from uuid import uuid4
 from datetime import datetime, date
 from pathlib import Path
 from .scheduling import period
@@ -28,8 +30,8 @@ class Database:
         if version > 1:
             self.connection.close()
             raise RuntimeError('This database was created by a newer app. Please update ChecklistApp.')
-        with self.connection:
-            self.connection.executescript('''
+        self.connection.executescript('''
+            BEGIN IMMEDIATE;
             CREATE TABLE IF NOT EXISTS checklists(
               id INTEGER PRIMARY KEY, name TEXT NOT NULL,
               type TEXT NOT NULL CHECK(type IN ('normal','daily','weekly')),
@@ -43,7 +45,9 @@ class Database:
               display_order INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
             PRAGMA user_version=1;
+            COMMIT;
             ''')
+        with self.transaction():
             if not self.setting('initialized', False):
                 # Existing databases are never reseeded or cleared.
                 if not self.checklists():
@@ -51,6 +55,26 @@ class Database:
                         self.create_checklist(name, kind)
                 self.set_setting('initialized', True)
         self.reset_due()
+
+    @contextmanager
+    def transaction(self):
+        """Nested operations share an atomic outer transaction, without early commits."""
+        nested = self.connection.in_transaction
+        savepoint = 'operation_' + uuid4().hex
+        self.connection.execute(f'SAVEPOINT {savepoint}' if nested else 'BEGIN IMMEDIATE')
+        try:
+            yield
+            if nested:
+                self.connection.execute(f'RELEASE SAVEPOINT {savepoint}')
+            else:
+                self.connection.commit()
+        except Exception:
+            if nested:
+                self.connection.execute(f'ROLLBACK TO SAVEPOINT {savepoint}')
+                self.connection.execute(f'RELEASE SAVEPOINT {savepoint}')
+            else:
+                self.connection.rollback()
+            raise
 
     def close(self):
         self.connection.close()
@@ -60,7 +84,7 @@ class Database:
         return json.loads(row[0]) if row else default
 
     def set_setting(self, key, value):
-        with self.connection:
+        with self.transaction():
             self.connection.execute('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key,json.dumps(value)))
 
     def checklists(self):
@@ -70,7 +94,7 @@ class Database:
         if not name.strip() or kind not in ('normal','daily','weekly'):
             raise ValueError('Enter a checklist name and a valid type.')
         now = self.clock()
-        with self.connection:
+        with self.transaction():
             return self.connection.execute('INSERT INTO checklists(name,type,display_order,last_processed_period,created_at,updated_at) VALUES(?,?,(SELECT COALESCE(MAX(display_order),-1)+1 FROM checklists),?,?,?)', (name.strip(),kind,period(kind,now) if kind!='normal' else None,now.isoformat(),now.isoformat())).lastrowid
 
     def edit_checklist(self, ident, name, kind):
@@ -78,16 +102,17 @@ class Database:
         if not name.strip() or kind not in ('normal','daily','weekly'):
             raise ValueError('Enter a checklist name and a valid type.')
         marker = old['last_processed_period'] if old['type']==kind else (period(kind,self.clock()) if kind!='normal' else None)
-        with self.connection:
+        with self.transaction():
             self.connection.execute('UPDATE checklists SET name=?,type=?,last_processed_period=?,updated_at=? WHERE id=?',(name.strip(),kind,marker,self.clock().isoformat(),ident))
 
     def delete_checklist(self, ident):
-        with self.connection:
+        with self.transaction():
             self.connection.execute('DELETE FROM checklists WHERE id=?',(ident,))
 
     def duplicate(self, ident):
         row = self.connection.execute('SELECT * FROM checklists WHERE id=?',(ident,)).fetchone()
-        with self.connection:
+        with self.transaction():
+            self.reset_due()
             new = self.create_checklist(row['name']+' (copy)',row['type'])
             self.connection.execute('INSERT INTO tasks(checklist_id,title,description,is_completed,priority,due_date,display_order,created_at,updated_at) SELECT ?,title,description,is_completed,priority,due_date,display_order,created_at,updated_at FROM tasks WHERE checklist_id=?',(new,ident))
         return new
@@ -103,37 +128,37 @@ class Database:
         if due_date:
             date.fromisoformat(due_date)
         now = self.clock().isoformat()
-        with self.connection:
+        with self.transaction():
             if ident is None:
                 return self.connection.execute('INSERT INTO tasks(checklist_id,title,description,priority,due_date,display_order,created_at,updated_at) VALUES(?,?,?,?,?,(SELECT COALESCE(MAX(display_order),-1)+1 FROM tasks WHERE checklist_id=?),?,?)',(checklist,title.strip(),description,priority,due_date,checklist,now,now)).lastrowid
             self.connection.execute('UPDATE tasks SET title=?,description=?,priority=?,due_date=?,updated_at=? WHERE id=? AND checklist_id=?',(title.strip(),description,priority,due_date,now,ident,checklist))
             return ident
 
     def complete(self, ident, completed):
-        self.reset_due()
-        with self.connection:
+        with self.transaction():
+            self.reset_due()
             self.connection.execute('UPDATE tasks SET is_completed=?,updated_at=? WHERE id=?',(int(completed),self.clock().isoformat(),ident))
 
     def delete_task(self, ident):
-        with self.connection:
+        with self.transaction():
             self.connection.execute('DELETE FROM tasks WHERE id=?',(ident,))
 
     def clear_completed(self, ident):
-        with self.connection:
+        with self.transaction():
+            self.reset_due()
             self.connection.execute('DELETE FROM tasks WHERE checklist_id=? AND is_completed=1',(ident,))
 
     def reorder(self, table, identifiers):
         if table not in ('tasks','checklists'):
             raise ValueError('Invalid ordering target.')
-        with self.connection:
+        with self.transaction():
             self.connection.executemany(f'UPDATE {table} SET display_order=? WHERE id=?',enumerate(identifiers))
 
     def reset_due(self):
         now = self.clock()
         changed = []
-        # BEGIN IMMEDIATE serializes checking and resetting across app instances.
-        self.connection.execute('BEGIN IMMEDIATE')
-        try:
+        # The outer write transaction serializes checking across app instances.
+        with self.transaction():
             for row in self.connection.execute("SELECT * FROM checklists WHERE type!='normal'").fetchall():
                 current = period(row['type'],now)
                 previous = row['last_processed_period']
@@ -142,10 +167,6 @@ class Database:
                         self.connection.execute('UPDATE tasks SET is_completed=0 WHERE checklist_id=?',(row['id'],))
                         changed.append(row['id'])
                     self.connection.execute('UPDATE checklists SET last_processed_period=?,updated_at=? WHERE id=?',(current,now.isoformat(),row['id']))
-            self.connection.commit()
-        except Exception:
-            self.connection.rollback()
-            raise
         return changed
 
     def backup(self, destination):
