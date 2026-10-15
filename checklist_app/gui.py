@@ -1,10 +1,12 @@
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QSize
+from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QPushButton, QLabel, QListWidget, QListWidgetItem, QLineEdit, QComboBox, QProgressBar,
     QDialog, QFormLayout, QDialogButtonBox, QTextEdit, QCheckBox, QMessageBox, QFileDialog,
-    QAbstractItemView)
+    QAbstractItemView, QMenu)
 from datetime import date
 from .scheduling import next_reset
+from .sidebar import ChecklistSidebar, CATEGORY_ROLE
 
 
 class Editor(QDialog):
@@ -65,11 +67,20 @@ class Window(QMainWindow):
         layout = QHBoxLayout(root)
         side = QVBoxLayout()
         side.addWidget(QLabel('ChecklistApp'))
-        self.sidebar = QListWidget()
+        self.sidebar = ChecklistSidebar()
+        self.sidebar.reorderRequested.connect(lambda ident, destination:self.safe(lambda:self.reorder_checklist(ident, destination)))
         self.sidebar.setMinimumWidth(230)
         self.sidebar.currentItemChanged.connect(self.select)
         side.addWidget(self.sidebar)
-        for title, callback in [('Create checklist',self.create),('Checklist settings',self.edit_list),('Duplicate checklist',self.duplicate),('Delete checklist',self.delete_list),('Move checklist up',lambda:self.move_list(-1)),('Move checklist down',lambda:self.move_list(1)),('Settings',self.settings),('Back up database',self.backup)]:
+        self.edit_checklist_button = QPushButton('Edit Checklist')
+        self.checklist_menu = QMenu(self)
+        for title, callback in [('Create checklist',self.create),('Checklist settings',self.edit_list),('Duplicate checklist',self.duplicate),('Delete checklist',self.delete_list)]:
+            action = self.checklist_menu.addAction(title)
+            action.triggered.connect(lambda checked=False, cb=callback:self.safe(cb))
+        self.checklist_menu.aboutToShow.connect(self.update_checklist_menu)
+        self.edit_checklist_button.setMenu(self.checklist_menu)
+        side.addWidget(self.edit_checklist_button)
+        for title, callback in [('Settings',self.settings),('Back up database',self.backup)]:
             button = QPushButton(title)
             button.clicked.connect(lambda checked=False, cb=callback:self.safe(cb))
             side.addWidget(button)
@@ -135,12 +146,30 @@ class Window(QMainWindow):
         chosen = None
         for kind, title in [('daily','DAILY'),('weekly','WEEKLY'),('normal','OTHER')]:
             header = QListWidgetItem(title)
-            header.setFlags(Qt.NoItemFlags)
+            header.setFlags(Qt.ItemIsEnabled)
+            header.setData(CATEGORY_ROLE,kind)
+            header.setSizeHint(QSize(200,44))
+            font = header.font()
+            font.setBold(True)
+            font.setPointSize(10)
+            header.setFont(font)
+            light = self.db.setting('light',False)
+            colors = {'daily':('#dcecff','#18334d','#235fa4','#8fc6ff'), 'weekly':('#ede4ff','#302745','#6942a1','#c9abff'), 'normal':('#dcf2eb','#1c3935','#256e5e','#8edac6')}
+            day_bg, night_bg, day_fg, night_fg = colors[kind]
+            header.setBackground(QBrush(QColor(day_bg if light else night_bg)))
+            header.setForeground(QBrush(QColor(day_fg if light else night_fg)))
             self.sidebar.addItem(header)
+            badge = QLabel(title)
+            badge.setAttribute(Qt.WA_TransparentForMouseEvents)
+            badge.setStyleSheet(f"background:{day_bg if light else night_bg}; color:{day_fg if light else night_fg}; border-radius:6px; padding:10px 12px; font-size:12px; font-weight:700;")
+            self.sidebar.setItemWidget(header, badge)
             for row in self.db.checklists():
                 if row['type']==kind:
                     item = QListWidgetItem(row['name'])
                     item.setData(Qt.UserRole,row['id'])
+                    item.setData(CATEGORY_ROLE,kind)
+                    item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsDragEnabled)
+                    item.setToolTip(row['name'] + '\nDrag within this category to reorder.')
                     self.sidebar.addItem(item)
                     if row['id']==self.selected:
                         chosen = item
@@ -151,6 +180,8 @@ class Window(QMainWindow):
         self.select(chosen)
 
     def select(self, item, previous=None):
+        if item is not None and item.data(Qt.UserRole) is None:
+            return
         self.selected = item.data(Qt.UserRole) if item else None
         if self.db.setting('remember',True):
             self.db.set_setting('selected',self.selected)
@@ -230,17 +261,26 @@ class Window(QMainWindow):
             self.db.delete_checklist(self.selected)
             self.refresh_sidebar()
 
-    def move_list(self, delta):
-        row = self.current()
-        if not row:
+    def update_checklist_menu(self):
+        for action in self.checklist_menu.actions()[1:]:
+            action.setEnabled(self.current() is not None)
+
+    def reorder_checklist(self, ident, destination):
+        source = next((self.sidebar.item(i) for i in range(self.sidebar.count())
+                       if self.sidebar.item(i).data(Qt.UserRole) == ident), None)
+        if not self.sidebar.can_drop(source, destination):
             return
-        ids = [r['id'] for r in self.db.checklists() if r['type']==row['type']]
-        index = ids.index(self.selected)
-        other = index+delta
-        if 0 <= other < len(ids):
-            ids[index],ids[other] = ids[other],ids[index]
-            self.db.reorder('checklists',ids)
-            self.refresh_sidebar()
+        kind = source.data(CATEGORY_ROLE)
+        items = [self.sidebar.item(i) for i in range(self.sidebar.count())
+                 if self.sidebar.item(i).data(Qt.UserRole) is not None
+                 and self.sidebar.item(i).data(CATEGORY_ROLE) == kind]
+        ordered = [item.data(Qt.UserRole) for item in items]
+        insertion = sum(self.sidebar.row(item) < destination and item is not source for item in items)
+        ordered.remove(ident)
+        ordered.insert(insertion, ident)
+        self.db.reorder('checklists', ordered)
+        self.selected = ident
+        self.refresh_sidebar()
 
     def add_task(self):
         if self.current():
@@ -292,11 +332,13 @@ class Window(QMainWindow):
             if not widgets['remember'].isChecked():
                 self.db.set_setting('selected',None)
             self.theme()
-            self.refresh_tasks()
+            self.refresh_sidebar()
 
     def theme(self):
         light = self.db.setting('light',False)
         bg, panel, text = ('#f1f3f8','#ffffff','#182235') if light else ('#191c24','#252a36','#edf0fa')
+        thumb = '#adb8ca' if light else '#566178'
+        hover = '#7b8da9' if light else '#8293b2'
         self.setStyleSheet(f'''QWidget {{background:{bg}; color:{text}; font-size:14px;}}
         QListWidget,QLineEdit,QTextEdit,QComboBox {{background:{panel}; border:1px solid #657089; border-radius:6px; padding:8px;}}
         QListWidget::item {{padding:10px;}} QListWidget::item:selected {{background:#465eaa; color:white;}}
@@ -304,6 +346,21 @@ class Window(QMainWindow):
         QPushButton:hover {{background:#465eaa; color:white;}}
         QProgressBar {{border:0; background:{panel}; border-radius:6px; text-align:center;}}
         QProgressBar::chunk {{background:#657ee8; border-radius:6px;}}
+        QMenu {{background:{panel}; border:1px solid #657089; padding:6px;}}
+        QMenu::item {{padding:9px 24px; border-radius:4px;}}
+        QMenu::item:selected {{background:#465eaa; color:white;}}
+        QMenu::item:disabled {{color:#7e8798;}}
+        QListWidget#checklistSidebar {{border:0; padding:4px;}}
+        QListWidget#checklistSidebar::item {{margin:3px 0; border-radius:6px;}}
+        QListWidget#checklistSidebar::item:hover {{background:#465eaa; color:white;}}
+        QScrollBar:vertical {{background:transparent; width:10px; margin:3px 1px;}}
+        QScrollBar::handle:vertical {{background:{thumb}; min-height:32px; border-radius:4px;}}
+        QScrollBar::handle:vertical:hover {{background:{hover};}}
+        QScrollBar:horizontal {{background:transparent; height:10px; margin:1px 3px;}}
+        QScrollBar::handle:horizontal {{background:{thumb}; min-width:32px; border-radius:4px;}}
+        QScrollBar::handle:horizontal:hover {{background:{hover};}}
+        QScrollBar::add-line,QScrollBar::sub-line {{width:0; height:0; background:transparent; border:0;}}
+        QScrollBar::add-page,QScrollBar::sub-page {{background:transparent;}}
         QCheckBox::indicator,QListWidget::indicator {{width:22px;height:22px;}}''')
 
     def backup(self):
