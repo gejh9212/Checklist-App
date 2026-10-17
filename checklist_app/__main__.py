@@ -7,6 +7,9 @@ def main():
     from .gui import Window
     app = QApplication(sys.argv)
     try:
+        if '--cloud' in sys.argv:
+            from .cloud.desktop import launch
+            return launch(app, data_path())
         db = Database(data_path())
         window = Window(db)
         window.show()
