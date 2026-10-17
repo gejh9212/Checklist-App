@@ -1,6 +1,8 @@
 __pycache__/
 *.py[cod]
 .venv/
+.venv315/
+.venv312/
 venv/
 build/
 dist/

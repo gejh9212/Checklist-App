@@ -16,16 +16,26 @@ You now have the two non-secret client configuration values: project URL and pub
 
 ## 2. Configure and run Windows
 
-Open PowerShell in the project folder. Install Python 3.12+ first if needed.
+Open PowerShell in the project folder. Install standard 64-bit Python 3.15 (or Python 3.12–3.14) first if needed.
 
 ```powershell
-py -m venv .venv
+py -3.15 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 Copy-Item .env.example .env
 notepad .env
 ```
 
 Replace only the placeholder URL and publishable key in `.env`, then save it. `.env` is excluded from Git. This file must never contain a password, service-role key, or secret key.
+
+If you already created `.venv` with a different Python, leave it intact and create a separate environment:
+
+```powershell
+py -3.15 -m venv .venv315
+.\.venv315\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv315\Scripts\python.exe -m checklist_app --cloud
+```
+
+Use `.venv315` in subsequent commands when using that environment. Changing virtual environments does not alter your Local AppData checklist database. Download the updated upgrade branch first: older copies pin PySide6 6.8.3, which cannot install on Python 3.15. The current pins are PySide6 6.12.0 and PyInstaller 6.22.3. Run `py -3.15 --version` to verify the interpreter.
 
 Launch cloud mode:
 

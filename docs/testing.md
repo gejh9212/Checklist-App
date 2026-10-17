@@ -2,7 +2,7 @@
 
 ## Results actually obtained in the Linux workspace
 
-- **42 Python tests passed**, with **zero skips** in the final full run using a disposable PostgreSQL 17 instance. This includes the original 20 tests, a cloud Qt regression test, 11 client/configuration/migration tests, and 10 real PostgreSQL integration tests.
+- **43 Python tests passed**, with **zero skips** in the final full run using a disposable PostgreSQL 17 instance. This includes the original 20 tests, a cloud Qt regression test, 12 client/configuration/migration tests, and 10 real PostgreSQL integration tests.
 - The complete SQL migration was applied successfully to a fresh disposable database, not just patched into a pre-existing test schema.
 - PostgreSQL tests exercise RLS isolation, anonymous access denial, denial of direct writes, inaccessible private functions, concurrent writes from two connections, duplicate completion prevention, historical periods, daily/weekly boundaries, Seoul/New York daylight saving boundaries, ordering, atomic/idempotent import, and the desktop adapter's create/edit/complete/delete flow through real SQL.
 - Local client tests cover offline read cache, blocked writes, reconnection, account separation, period payloads independent of the device clock, preserved uncertain drafts, configuration key rejection, secure-storage adapter behavior with an in-memory test backend, stable import IDs, and original SQLite byte preservation.
@@ -12,6 +12,12 @@
 
 The SQL tests emulate `auth.uid()` in an isolated local database. They prove database authorization behavior under those claims, **not Supabase-hosted JWT verification or authentication service behavior**. The two-client contract test uses the desktop adapter against SQL, not an executed Flutter client.
 
+## Python 3.15 compatibility update
+
+Current pins are PySide6 6.12.0, PyInstaller 6.22.3, and psycopg binary 3.3.6. The complete 43-test suite passed on CPython **3.15.0rc3 on Linux**, using the new dependencies and real disposable PostgreSQL. The available managed Python 3.15 build was a release candidate; this does not establish testing on a final Windows release. Standard Windows x64/Python 3.15 dependencies also resolved successfully in a binary-only cross-platform dependency check. PyInstaller 6.22.3 starts successfully on this interpreter; a Windows executable still needs a native build and run. Free-threaded Python is not supported by the selected Qt wheels.
+
+The workflow now checks Python 3.12 and 3.15 with PostgreSQL on Linux and adds a Windows x64/Python 3.15 GUI/storage test job. Those GitHub checks must run after the compatibility commit is pushed; a dependency resolution is not a Windows runtime test. Update your local repository before reinstalling because older copies pin incompatible packages.
+
 ## Run Python tests yourself
 
 ```powershell
@@ -19,7 +25,7 @@ The SQL tests emulate `auth.uid()` in an isolated local database. They prove dat
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Without `CHECKLIST_TEST_PG_DSN`, the ten PostgreSQL integration tests are explicitly skipped; this does not validate database security. The other 32 tests run locally, with temporary files inside `tests/`. Qt may print offscreen-platform messages; those are separate from the test result.
+Without `CHECKLIST_TEST_PG_DSN`, the ten PostgreSQL integration tests are explicitly skipped; this does not validate database security. The other 33 tests run locally, with temporary files inside `tests/`. Qt may print offscreen-platform messages; those are separate from the test result.
 
 For database checks, create an **empty, disposable local PostgreSQL database** with a test administrator. Never use your production database or your personal Supabase project. Apply, in order:
 

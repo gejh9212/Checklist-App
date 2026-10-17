@@ -106,7 +106,7 @@ def launch(app, base_path):
     if not user_id:
         login = Login(client)
         if not login.exec():
-            client.auth.stop_auto_refresh()
+            client.auth.close()
             return 0
         user_id = login.user_id
     storage.set_item('checklist-last-user',user_id)
@@ -136,7 +136,7 @@ def launch(app, base_path):
     window.statusBar().addPermanentWidget(zone)
     logout = QPushButton('Sign out')
     def sign_out():
-        client.auth.stop_auto_refresh()
+        watcher.close()
         try:
             run_request(lambda:client.auth.sign_out({'scope':'local'}))
         except Exception:
@@ -150,6 +150,6 @@ def launch(app, base_path):
     window.show()
     result = app.exec()
     watcher.close()
-    client.auth.stop_auto_refresh()
+    client.auth.close()
     store.close()
     return result

@@ -4,11 +4,13 @@ No application binaries have been built on Windows, Android, or iOS in the Linux
 
 ## Windows 10/11
 
-Install Python 3.12+ and dependencies as described in setup.md. From the repository root:
+Install standard 64-bit Python 3.15 (or Python 3.12–3.14) and dependencies as described in setup.md. From the repository root:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build_windows.ps1
 ```
+
+If you used the separate `.venv315` environment, build with `powershell -ExecutionPolicy Bypass -File .\build_windows.ps1 -PythonExe .\.venv315\Scripts\python.exe`.
 
 This invokes the pinned PyInstaller and includes keyring backend, Supabase, and timezone modules. Test `dist\ChecklistApp.exe` on Windows. Local-only mode remains the default. To use cloud mode, place your private `.env` configuration in the folder you launch from, or configure the two client environment variables, then run:
 
