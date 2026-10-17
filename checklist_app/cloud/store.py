@@ -172,11 +172,18 @@ class SupabaseTransport:
     def __init__(self, client):
         self.client = client
 
+    def authenticate(self):
+        if self.client.auth.get_session() is None:
+            raise SyncError('Sign in again before accessing cloud data.')
+
     def snapshot(self):
+        self.authenticate()
         return self.client.rpc('checklist_snapshot').execute().data
 
     def mutate(self, revision, operation, payload):
+        self.authenticate()
         return self.client.rpc('checklist_mutate',{'expected_revision':revision,'operation':operation,'payload':payload}).execute().data
 
     def import_manifest(self, revision, manifest):
+        self.authenticate()
         return self.client.rpc('checklist_import',{'expected_revision':revision,'manifest':manifest}).execute().data

@@ -1,4 +1,5 @@
 import copy
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -116,7 +117,7 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(manifest['tasks'][0]['title'],'Existing task')
         self.assertTrue(manifest['tasks'][0]['is_completed'])
         backup=backup_source(self.path)
-        with sqlite3.connect(backup) as connection:
+        with closing(sqlite3.connect(backup)) as connection:
             self.assertEqual(connection.execute('SELECT title FROM tasks').fetchone()[0],'Existing task')
         self.assertEqual(self.path.read_bytes(),before)
     def test_import_identity_retained_after_source_edits(self):
@@ -164,3 +165,16 @@ class ConfigurationTests(unittest.TestCase):
         storage.clear()
         self.assertIsNone(storage.get_item('session'))
         self.assertEqual(backend.data,{})
+
+    def test_actual_sdk_client_supports_public_close_without_session_timer(self):
+        from checklist_app.cloud.auth import make_client
+        class Backend:
+            def get_password(self,service,key): return None
+            def set_password(self,service,key,value): pass
+            def delete_password(self,service,key): pass
+        client = make_client(CloudConfig('https://example.supabase.co','sb_publishable_test'),SecureStorage('sdk-test',Backend()))
+        try:
+            self.assertFalse(client.options.auto_refresh_token)
+            self.assertIsNone(client.auth.get_session())
+        finally:
+            client.auth.close()

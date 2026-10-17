@@ -84,8 +84,10 @@ class SecureStorage(SyncSupportedStorage):
 
 
 def make_client(config, storage):
+    # Refresh on authenticated requests/Realtime checks, not an SDK background
+    # timer. This provides a public close() lifecycle and keeps stored sessions.
     from supabase import create_client, ClientOptions
     import httpx
     return create_client(config.url, config.key, options=ClientOptions(
-        storage=storage, persist_session=True, auto_refresh_token=True,
+        storage=storage, persist_session=True, auto_refresh_token=False,
         postgrest_client_timeout=12, httpx_client=httpx.Client(timeout=12)))
