@@ -14,21 +14,21 @@ After configuring the project URL and publishable key in ignored `.env`, launch 
 
 ## Existing local-only desktop app
 
-An offline Windows desktop checklist app using Python 3.12+, PySide6, and SQLite. In local-only mode, no accounts, internet APIs, or database server are needed. Installation downloads dependencies; normal use is offline.
+An offline Windows desktop checklist app using Python 3.12–3.15, PySide6, and SQLite. In local-only mode, no accounts, internet APIs, or database server are needed. Installation downloads dependencies; normal use is offline.
 
 ## Run on Windows 10 or 11
 
-1. Install Python 3.12 or newer from python.org. Enable **Add Python to PATH** in the installer.
+1. Install standard 64-bit Python 3.15 (or Python 3.12–3.14) from python.org. Enable **Add Python to PATH** in the installer.
 2. Download or clone this repository, then open PowerShell in the project folder.
 3. Run these commands, one line at a time:
 
 ```powershell
-py -3.12 -m venv .venv
+py -3.15 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe -m checklist_app
 ```
 
-If you have a newer Python version, replace `py -3.12` with its version, such as `py -3.13`. You do not need to activate the virtual environment. The `.venv` folder holds the app's dependencies separately from other Python projects.
+If using Python 3.12–3.14 instead, replace `py -3.15` with that version. Use the standard Windows x64 interpreter; the optional free-threaded build is not supported by these Qt wheels. You do not need to activate the virtual environment. The `.venv` folder holds the app's dependencies separately from other Python projects.
 
 ## Using the app
 
