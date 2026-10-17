@@ -112,10 +112,12 @@ class Window(QMainWindow):
         self.tasks.model().rowsMoved.connect(lambda *args:self.safe(self.reorder_tasks))
         main.addWidget(self.tasks)
         buttons = QHBoxLayout()
+        self.task_buttons = []
         for title, callback in [('Add task',self.add_task),('Edit task',lambda:self.edit_task(self.tasks.currentItem())),('Delete task',self.delete_task),('Clear completed',self.clear)]:
             button = QPushButton(title)
             button.clicked.connect(lambda checked=False, cb=callback:self.safe(cb))
             buttons.addWidget(button)
+            self.task_buttons.append(button)
         main.addLayout(buttons)
         main.addWidget(QLabel('Double-click a task to edit. Drag tasks to reorder when showing all tasks.'))
         layout.addLayout(main,3)
@@ -124,6 +126,8 @@ class Window(QMainWindow):
         self.timer = QTimer(self)
         self.timer.timeout.connect(lambda:self.safe(self.tick))
         self.timer.start(1000)
+        if getattr(self.db,'is_cloud',False):
+            self.tick()
 
     def safe(self, callback):
         if self.reporting_error:
@@ -203,7 +207,10 @@ class Window(QMainWindow):
         percent = round(completed*100/total) if total else 0
         self.summary.setText(f'{completed}/{total} completed • {total-completed} remaining • {percent}%')
         self.progress.setValue(percent)
-        self.reset_label.setText(f"{row['type'].title()} • Next reset: {next_reset(row['type'],self.db.clock()):%A, %B %d, %Y at %H:%M}" if row and row['type']!='normal' else 'Normal • No automatic reset')
+        if getattr(self.db,'is_cloud',False):
+            self.reset_label.setText(self.db.reset_text(row) if row else 'Cloud account • Create or import a checklist')
+        else:
+            self.reset_label.setText(f"{row['type'].title()} • Next reset: {next_reset(row['type'],self.db.clock()):%A, %B %d, %Y at %H:%M}" if row and row['type']!='normal' else 'Normal • No automatic reset')
         bottom = self.db.setting('completed_bottom',False)
         if bottom:
             records = sorted(records,key=lambda t:t['is_completed'])
@@ -217,7 +224,10 @@ class Window(QMainWindow):
             item = QListWidgetItem(label)
             item.setToolTip(task['description'])
             item.setData(Qt.UserRole,task['id'])
-            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            if getattr(self.db,'is_cloud',False):
+                item.setData(Qt.UserRole+1,row['period_key'])
+                item.setData(Qt.UserRole+2,self.db.snapshot['revision'])
+            item.setFlags((item.flags() | Qt.ItemIsUserCheckable) if self.can_edit() else (item.flags() & ~Qt.ItemIsUserCheckable))
             item.setCheckState(Qt.Checked if task['is_completed'] else Qt.Unchecked)
             font = item.font()
             font.setStrikeOut(bool(task['is_completed']))
@@ -225,31 +235,56 @@ class Window(QMainWindow):
             self.tasks.addItem(item)
             if task['id'] == selected_id:
                 self.tasks.setCurrentItem(item)
-        self.tasks.setDragDropMode(QAbstractItemView.InternalMove if not query and self.filter.currentIndex()==0 and not bottom else QAbstractItemView.NoDragDrop)
+        self.tasks.setDragDropMode(QAbstractItemView.InternalMove if self.can_edit() and not query and self.filter.currentIndex()==0 and not bottom else QAbstractItemView.NoDragDrop)
         self.loading = False
 
     def toggle(self, item):
         if not self.loading:
-            self.safe(lambda:self.db.complete(item.data(Qt.UserRole),item.checkState()==Qt.Checked))
+            if getattr(self.db,'is_cloud',False):
+                self.safe(lambda:self.db.complete(item.data(Qt.UserRole),item.checkState()==Qt.Checked,item.data(Qt.UserRole+1),item.data(Qt.UserRole+2)))
+            else:
+                self.safe(lambda:self.db.complete(item.data(Qt.UserRole),item.checkState()==Qt.Checked))
             self.refresh_tasks()
+
+    def can_edit(self):
+        return not getattr(self.db,'is_cloud',False) or self.db.online
 
     def tick(self):
         if self.db.reset_due():
-            self.refresh_tasks()
+            if getattr(self.db,'is_cloud',False):
+                self.refresh_sidebar()
+                self.theme()
+            else:
+                self.refresh_tasks()
+        if getattr(self.db,'is_cloud',False):
+            for button in self.task_buttons:
+                button.setEnabled(self.can_edit())
+            self.edit_checklist_button.setEnabled(self.can_edit())
+            self.sidebar.setDragEnabled(self.can_edit())
+            if not self.can_edit():
+                self.refresh_tasks()
+
 
     def create(self):
         dialog = Editor(self,True)
-        if dialog.exec():
-            self.selected = self.db.create_checklist(dialog.title.text(),dialog.choice.currentText())
+        from uuid import uuid4
+        cloud_id = str(uuid4())
+        def save():
+            if getattr(self.db,'is_cloud',False):
+                self.selected = self.db.create_checklist(dialog.title.text(),dialog.choice.currentText(),cloud_id)
+            else:
+                self.selected = self.db.create_checklist(dialog.title.text(),dialog.choice.currentText())
             self.refresh_sidebar()
+        self.run_editor(dialog,save)
 
     def edit_list(self):
         row = self.current()
         if row:
             dialog = Editor(self,True,row)
-            if dialog.exec():
+            def save():
                 self.db.edit_checklist(row['id'],dialog.title.text(),dialog.choice.currentText())
                 self.refresh_sidebar()
+            self.run_editor(dialog,save)
 
     def duplicate(self):
         if self.current():
@@ -257,13 +292,19 @@ class Window(QMainWindow):
             self.refresh_sidebar()
 
     def delete_list(self):
-        if self.current() and self.confirm('Delete this checklist and all of its tasks? This cannot be undone.'):
-            self.db.delete_checklist(self.selected)
+        row = self.current()
+        revision = self.db.snapshot['revision'] if getattr(self.db,'is_cloud',False) else None
+        if row and self.confirm('Delete this checklist and all of its tasks? This cannot be undone.'):
+            if revision is None:
+                self.db.delete_checklist(row['id'])
+            else:
+                self.db.delete_checklist(row['id'],revision)
             self.refresh_sidebar()
 
     def update_checklist_menu(self):
+        self.checklist_menu.actions()[0].setEnabled(self.can_edit())
         for action in self.checklist_menu.actions()[1:]:
-            action.setEnabled(self.current() is not None)
+            action.setEnabled(self.can_edit() and self.current() is not None)
 
     def reorder_checklist(self, ident, destination):
         source = next((self.sidebar.item(i) for i in range(self.sidebar.count())
@@ -287,25 +328,63 @@ class Window(QMainWindow):
             self.task_dialog()
 
     def edit_task(self, item):
+        if not self.can_edit():
+            return
         if item:
             row = next(t for t in self.db.tasks(self.selected) if t['id']==item.data(Qt.UserRole))
             self.task_dialog(row)
 
+    def run_editor(self, dialog, save):
+        revision = self.db.snapshot['revision'] if getattr(self.db,'is_cloud',False) else None
+        while dialog.exec():
+            try:
+                if revision is not None and self.db.snapshot['revision']!=revision:
+                    raise RuntimeError('The cloud changed while this editor was open. Your draft is preserved. Compare it with the current checklist before saving again.')
+                save()
+                return
+            except Exception as error:
+                if revision is None:
+                    QMessageBox.warning(dialog,'Could not save',str(error))
+                else:
+                    self.db.refresh()
+                    revision = self.db.snapshot['revision']
+                    current = self.db.tasks(self.selected)
+                    details = '\n'.join(f"{t['title']} [{t['priority']}] — {t['description']}" for t in current)
+                    QMessageBox.warning(dialog,'Review your unsaved draft',str(error)+'\n\nCurrent cloud tasks:\n'+details)
+
     def task_dialog(self, row=None):
         dialog = Editor(self,row=row)
-        if dialog.exec():
-            self.db.save_task(self.selected,dialog.title.text(),dialog.description.toPlainText(),dialog.choice.currentText(),dialog.due.text().strip() or None,row['id'] if row else None)
+        checklist = self.selected
+        from uuid import uuid4
+        cloud_id = str(uuid4())
+        def save():
+            arguments = (checklist,dialog.title.text(),dialog.description.toPlainText(),dialog.choice.currentText(),dialog.due.text().strip() or None,row['id'] if row else None)
+            if getattr(self.db,'is_cloud',False):
+                self.db.save_task(*arguments,new_id=cloud_id)
+            else:
+                self.db.save_task(*arguments)
             self.refresh_tasks()
+        self.run_editor(dialog,save)
 
     def delete_task(self):
         item = self.tasks.currentItem()
-        if item and self.confirm('Delete the selected task? This cannot be undone.'):
-            self.db.delete_task(item.data(Qt.UserRole))
+        ident = item.data(Qt.UserRole) if item else None
+        revision = self.db.snapshot['revision'] if getattr(self.db,'is_cloud',False) else None
+        if ident and self.confirm('Delete the selected task? This cannot be undone.'):
+            if revision is None:
+                self.db.delete_task(ident)
+            else:
+                self.db.delete_task(ident,revision)
             self.refresh_tasks()
 
     def clear(self):
-        if self.current() and self.confirm('Permanently delete completed tasks from this checklist?'):
-            self.db.clear_completed(self.selected)
+        row = self.current()
+        revision = self.db.snapshot['revision'] if getattr(self.db,'is_cloud',False) else None
+        if row and self.confirm('Permanently delete completed tasks from this checklist?'):
+            if revision is None:
+                self.db.clear_completed(row['id'])
+            else:
+                self.db.clear_completed(row['id'],row['period_key'],revision)
             self.refresh_tasks()
 
     def reorder_tasks(self):
@@ -322,17 +401,28 @@ class Window(QMainWindow):
             box.setChecked(self.db.setting(key,default))
             widgets[key] = box
             form.addRow(box)
+        initial_shared = {key:widgets[key].isChecked() for key in ('light','completed_bottom','confirm')}
+        if getattr(self.db,'is_cloud',False) and not self.can_edit():
+            for key in initial_shared:
+                widgets[key].setEnabled(False)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(dialog.accept)
         buttons.rejected.connect(dialog.reject)
         form.addRow(buttons)
-        if dialog.exec():
-            for key, box in widgets.items():
-                self.db.set_setting(key,box.isChecked())
+        def save():
+            if getattr(self.db,'is_cloud',False):
+                shared = {key:widgets[key].isChecked() for key in initial_shared if widgets[key].isChecked()!=initial_shared[key]}
+                if shared:
+                    self.db.save_shared_settings(shared)
+                self.db.set_setting('remember',widgets['remember'].isChecked())
+            else:
+                for key, box in widgets.items():
+                    self.db.set_setting(key,box.isChecked())
             if not widgets['remember'].isChecked():
                 self.db.set_setting('selected',None)
             self.theme()
             self.refresh_sidebar()
+        self.run_editor(dialog,save)
 
     def theme(self):
         light = self.db.setting('light',False)
@@ -364,10 +454,11 @@ class Window(QMainWindow):
         QCheckBox::indicator,QListWidget::indicator {{width:22px;height:22px;}}''')
 
     def backup(self):
-        path, _ = QFileDialog.getSaveFileName(self,'Save a new backup','checklists-backup.db','SQLite database (*.db)')
+        cloud = getattr(self.db,'is_cloud',False)
+        path, _ = QFileDialog.getSaveFileName(self,'Save a new backup','cloud-snapshot.json' if cloud else 'checklists-backup.db','JSON snapshot (*.json)' if cloud else 'SQLite database (*.db)')
         if path:
             self.db.backup(path)
-            QMessageBox.information(self,'Backup saved','Your database backup was saved. Existing backups are never overwritten.')
+            QMessageBox.information(self,'Backup saved','Your snapshot was saved. Existing files are never overwritten.')
 
     def closeEvent(self, event):
         rect = self.geometry()

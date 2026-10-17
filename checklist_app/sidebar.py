@@ -6,7 +6,7 @@ CATEGORY_ROLE = Qt.UserRole + 1
 
 
 class ChecklistSidebar(QListWidget):
-    reorderRequested = Signal(int, int)
+    reorderRequested = Signal(object, int)
 
     def __init__(self, parent=None):
         super().__init__(parent)

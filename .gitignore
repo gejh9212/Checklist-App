@@ -15,3 +15,21 @@ backups/
 !.env.example
 secrets.*
 .pytest_cache/
+
+# Flutter, signing, and private client configuration
+.dart_tool/
+.flutter-plugins*
+.pub-cache/
+mobile/android/local.properties
+mobile/android/key.properties
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/ios/Flutter/ephemeral/
+mobile/ios/Flutter/Generated.xcconfig
+mobile/ios/Flutter/flutter_export_environment.sh
+config.local.json
+*.cloud-import.json

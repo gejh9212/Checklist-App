@@ -168,3 +168,64 @@ class SidebarTests(unittest.TestCase):
         last = next(sidebar.item(i) for i in range(sidebar.count()) if sidebar.item(i).data(Qt.UserRole)==weekly[0]['id'])
         self.window.reorder_checklist(source.data(Qt.UserRole), sidebar.row(last)+1)
         self.assertEqual([r['id'] for r in self.db.checklists() if r['type']=='weekly'], [weekly[0]['id'],weekly[1]['id']])
+
+
+class CloudWindowTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app = QApplication.instance() or QApplication([])
+
+    def test_uuid_sidebar_and_account_timezone_display(self):
+        from checklist_app.cloud.cache import ReadCache
+        from checklist_app.cloud.store import CloudDatabase
+        from uuid import uuid4
+        from copy import deepcopy
+        user, first, second = [str(uuid4()) for _ in range(3)]
+        snapshot = {'user_id':user,'revision':0,'settings':{},'timezone':'Asia/Seoul','server_time':'2026-10-18T20:00:00Z','tasks':[], 'checklists':[
+            {'id':first,'name':'First daily','type':'daily','display_order':0,'period_key':'daily:1:2026-10-18','next_reset':'2026-10-18T21:00:00Z','next_reset_local':'2026-10-19 06:00'},
+            {'id':second,'name':'Second daily','type':'daily','display_order':1,'period_key':'daily:1:2026-10-18','next_reset':'2026-10-18T21:00:00Z','next_reset_local':'2026-10-19 06:00'}]}
+        class Transport:
+            payload = None
+            offline = False
+            def snapshot(self):
+                if self.offline:
+                    raise OSError('offline')
+                return deepcopy(snapshot)
+            def mutate(self, revision, operation, payload):
+                self.payload=payload
+                for index, ident in enumerate(payload['ids']):
+                    next(row for row in snapshot['checklists'] if row['id']==ident)['display_order']=index
+                snapshot['revision']+=1
+                return {'id':None}
+        with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as folder:
+            transport = Transport()
+            db = CloudDatabase(transport,ReadCache(Path(folder)/'cloud.db',user))
+            db.refresh()
+            window = Window(db)
+            window.show()
+            self.app.processEvents()
+            try:
+                self.assertIn('2026-10-19 06:00',window.reset_label.text())
+                self.assertIn('Asia/Seoul',window.reset_label.text())
+                window.sidebar.reorderRequested.emit(second,1)
+                self.assertEqual(transport.payload['ids'],[second,first])
+                self.assertEqual(window.selected,second)
+                transport.offline=True
+                db.refresh()
+                window.tick()
+                self.assertFalse(window.edit_checklist_button.isEnabled())
+                self.assertFalse(window.sidebar.dragEnabled())
+                self.assertTrue(all(not b.isEnabled() for b in window.task_buttons))
+                transport.offline=False
+                db.refresh()
+                original=window.selected
+                def change_selection_during_confirmation(message):
+                    window.selected=first if original==second else second
+                    return True
+                with patch.object(window,'confirm',change_selection_during_confirmation), patch.object(db,'delete_checklist') as delete:
+                    window.delete_list()
+                    self.assertEqual(delete.call_args.args[0],original)
+            finally:
+                window.timer.stop()
+                window.close()
+                db.close()

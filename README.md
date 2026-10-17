@@ -1,6 +1,20 @@
 # ChecklistApp
 
-An offline Windows desktop checklist app using Python 3.12+, PySide6, and SQLite. No accounts, internet APIs, or database server are needed. Installation downloads dependencies; normal use is offline.
+## Windows + mobile cloud upgrade
+
+The existing local-only app is preserved. An optional Supabase cloud mode and a separate native Flutter Android/iOS companion are being added on `upgrade/windows-mobile-sync`. This upgrade has not been deployed or tested against a hosted Supabase project. The desktop/SQL tests pass; Flutter compilation and physical-platform checks remain pending SDK access and platform tools.
+
+- [Beginner setup: Supabase, Windows, and mobile](docs/setup.md)
+- [Safe SQLite migration and preview](docs/migration.md)
+- [Windows EXE, Android APK, and iOS builds](docs/deployment.md)
+- [Actual test results and outstanding checks](docs/testing.md)
+- [Architecture and staged upgrade plan](docs/upgrade-plan.md)
+
+After configuring the project URL and publishable key in ignored `.env`, launch the cloud desktop with `python -m checklist_app --cloud`. Launch without `--cloud` to keep using your independent local SQLite app. Signing in never automatically uploads or replaces your old database. Cloud mode uses server time and the account timezone (default Asia/Seoul); its offline cache is read-only. The existing local mode below retains its original local-time reset behavior.
+
+## Existing local-only desktop app
+
+An offline Windows desktop checklist app using Python 3.12+, PySide6, and SQLite. In local-only mode, no accounts, internet APIs, or database server are needed. Installation downloads dependencies; normal use is offline.
 
 ## Run on Windows 10 or 11
 
